@@ -188,6 +188,13 @@
     position: relative;
     z-index: 30;
   }
+  /* 开始按钮始终居中、醒目、可点（手机/平板/电脑通用）。
+     仅在「开始前」显示；游戏开始后脚本会隐藏它，不影响对局。 */
+  #action-zone .action-btns #main-action-btn {
+    font-size: 18px;
+    padding: 16px 48px;
+    min-width: 200px;
+  }
   @supports (aspect-ratio: 1) {
     #oval-table {
       padding-bottom: 0;
@@ -2091,7 +2098,7 @@
   </div>
 
   <!-- ══ 行动按钮区 ══ -->
-  <div id="action-zone" style="display:none">
+  <div id="action-zone" style="display:block">
     <div class="action-btns" style="justify-content:center; margin-top:12px">
       <button class="btn btn-gold pulse" id="main-action-btn" onclick="mainAction()">开始游戏</button>
     </div>
@@ -3113,7 +3120,4 @@ function calcNiuNiu(hand5) {
         }
       } else {
         // 普通：余两张点数和的个位
-        const pt = (vals[remain[0]] + vals[remain[1]]) % 10;
-        if (pt === 0) {
-          ev = { level:10, cv:2010, label:t('niuNiu'), multiplier:2, specialType:'NiuNiu' };
-        } else {
+      
