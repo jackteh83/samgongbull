@@ -124,6 +124,11 @@
   }
   .card .r{font-size:11px;} .card .s{font-size:9px;}
   .card.red{color:var(--red);} .card.blk{color:#1a1a1a;}
+  .card.back{
+    background:repeating-linear-gradient(45deg,#7a1f1f,#7a1f1f 3px,#9a2b2b 3px,#9a2b2b 6px);
+    border:1px solid #d4a843;display:flex;align-items:center;justify-content:center;
+  }
+  .card.back .back-deco{font-size:11px;opacity:0.5;color:#f0c96b;}
   .card.combo{outline:2px solid var(--gold);}
   .card.lg{width:40px;height:56px;} .card.lg .r{font-size:18px;} .card.lg .s{font-size:14px;}
 
@@ -136,7 +141,7 @@
   }
   .chip-row{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:12px;}
   .chip{
-    border:none;border-radius:999px;width:54px;height:54px;font-weight:700;font-size:14px;color:#1a1a0a;
+    border:none;border-radius:999px;width:46px;height:46px;font-weight:700;font-size:13px;color:#1a1a0a;
     background:radial-gradient(circle at 38% 32%, var(--gold-lt), var(--gold));
     box-shadow:0 3px 8px rgba(0,0,0,0.4);transition:.12s;
   }
@@ -388,7 +393,9 @@ const LangCtx=createContext('zh');
 const useT=()=>{ const lang=useContext(LangCtx); return k=>I18N[lang][k]; };
 const useLang=()=>useContext(LangCtx);
 
-function CardView({card,combo,big}){
+function CardView({card,combo,big,back}){
+  if(back) return React.createElement('div',{className:'card back'+(big?' lg':'')},
+    React.createElement('span',{className:'back-deco'},'🀫'));
   if(!card) return null;
   const cls=['card', RED.has(card.suit)?'red':'blk']; if(combo)cls.push('combo'); if(big)cls.push('lg');
   return React.createElement('div',{className:cls.join(' ')},
@@ -516,37 +523,29 @@ function Game(){
   }
   function revealNiu(){ playSfx('flip'); resolveStage(players,'niu'); }
 
-  // ── 结算 ──
+  // ── 结算（翻牌后：亮正面 + 桌面显示分数，无弹窗）──
   function resolveStage(psIn,stage){
     const ps=psIn.map(p=>({...p}));
     const dealer=ps[dealerIdx];
-    const rows=[];
     ps.forEach(p=>{
       if(!isActive(p)||p.idx===dealerIdx)return;
-      let cmp,mult,pLabel;
+      let cmp,mult;
       if(stage==='sg'){
         cmp=compareSanGong(p.sg,dealer.sg);
         mult=(p.sg.isTripleFace||dealer.sg.isTripleFace)?3:((p.sg.isTen||dealer.sg.isTen)?2:1);
-        pLabel=sanGongLabel(p.sg,lang);
       }else{
         cmp=compareNiuNiu(p.niu,dealer.niu);
         const win=cmp>0?p.niu:dealer.niu;
         mult=win?Math.max(1,win.multiplier):1;
-        pLabel=p.niu.label;
       }
       let delta=0,rkind='draw'; const amt=p.bet;
       if(cmp>0){ delta=safeTransfer(dealer,p,amt*mult); rkind='win'; }
       else if(cmp<0){ delta=-safeTransfer(p,dealer,amt*mult); rkind='lose'; }
       p.result=rkind; p.resultText=delta>0?`+${delta}`:(delta<0?`${delta}`:t('draw'));
-      rows.push({idx:p.idx,name:pl(p.idx),pLabel,delta,rkind});
     });
     setPlayers(ps);
     playSfx(stage==='sg'?'flip':'win');
-    setSettle({stage,rows,dealerIdx,dealerLabel:stage==='sg'?sanGongLabel(dealer.sg,lang):dealer.niu.label});
-  }
-  function afterSettle(){
-    if(settle&&settle.stage==='sg'){ setSettle(null); setPhase('sgDone'); }
-    else { setSettle(null); endRound(); }
+    setPhase(stage==='sg'?'sgReveal':'niuReveal');
   }
 
   function endRound(){
@@ -556,6 +555,18 @@ function Game(){
     if(!aiAlive){ setGameOver('win'); return; }
     let di=dealerIdx; for(let s=1;s<=ps.length;s++){const i=(di+s)%ps.length; if(isActive(ps[i])){di=i;break;}}
     setDealerIdx(di); setRound(r=>r+1); setPhase('end');
+  }
+  // 翻牌后点"下一局"：检查输赢 → 轮庄 → 直接开下一局
+  function nextGo(){
+    playSfx('btn');
+    const ps=players.map(p=>({...p}));
+    if(ps[0].chips<=0){ setGameOver('lose'); return; }
+    const aiAlive=ps.some(p=>!p.isHuman&&p.active&&p.chips>0);
+    if(!aiAlive){ setGameOver('win'); return; }
+    let di=dealerIdx; for(let s=1;s<=ps.length;s++){const i=(di+s)%ps.length; if(isActive(ps[i])){di=i;break;}}
+    const nps=ps.map(p=>({...p,hand1:[],hand2:[],sg:null,niu:null,bet:0,result:null,resultText:''}));
+    setDealerIdx(di); setRound(r=>r+1);
+    setDeck(shuffle(buildDeck())); setPlayers(nps); setBet(0); setPhase('bet1');
   }
 
   // ── 重置/设置 ──
@@ -584,32 +595,38 @@ function Game(){
     }
   })();
   function renderSeat(p,orderIdx,total){
-    const pos=seatPos(orderIdx,total);
+    const pos0=seatPos(orderIdx,total);
     const cls=['seat']; if(p.idx===dealerIdx)cls.push('dealer'); if(p.isHuman)cls.push('you');
     const dealing=(phase==='dealing1'||phase==='dealing2');
-    const showCards=(dealing||phase==='dealt1'||phase==='sgDone'||phase==='bet2'||phase==='dealt2'||phase==='end');
-    const showFive=(phase==='dealing2'||phase==='dealt2'||phase==='end');
-    let cards = showFive?[...(p.hand1||[]),...(p.hand2||[])]:(p.hand1||[]);
-    // 发牌动画：按"从庄家起逐人逐张"的全局序号决定每张是否已发出
+    // 牌背阶段：发牌中 + 发完未翻（dealt1/bet2/dealt2）都显示牌背
+    const backPhase=(dealing||phase==='dealt1'||phase==='bet2'||phase==='dealt2');
+    // 正面阶段：翻牌后（sgReveal 显示3张；niuReveal/end 显示5张）
+    const faceSG=(phase==='sgReveal');
+    const faceNiu=(phase==='niuReveal'||phase==='end');
+    const showCards=(backPhase||faceSG||faceNiu);
+    // 该显示几张牌
+    const showFiveCount=(phase==='dealing2'||phase==='dealt2'||faceNiu);
+    let cards = showFiveCount?[...(p.hand1||[]),...(p.hand2||[])]:(p.hand1||[]);
     if(dealing){
-      const N=activePlayers.length; const pos=dealPosMap[p.idx]||0;
-      const visible=[];
-      cards.forEach((c,r)=>{ const seq=r*N+pos+1; if(seq<=dealtSeq) visible.push(c); });
+      const N=activePlayers.length; const pp=dealPosMap[p.idx]||0;
+      const visible=[]; cards.forEach((c,r)=>{ const seq=r*N+pp+1; if(seq<=dealtSeq) visible.push(c); });
       cards=visible;
     }
+    // 牌型标签 + 分数：只在翻牌后显示
     let label='';
-    if((phase==='dealt1'||phase==='sgDone')&&p.sg) label=sanGongLabel(p.sg,lang);
-    if((phase==='dealt2'||phase==='end')&&p.niu) label=p.niu.label;
-    return React.createElement('div',{key:p.idx,className:cls.join(' '),style:pos},
+    if(faceSG&&p.sg) label=sanGongLabel(p.sg,lang);
+    if(faceNiu&&p.niu) label=p.niu.label;
+    const showResult=(faceSG||faceNiu);
+    return React.createElement('div',{key:p.idx,className:cls.join(' '),style:pos0},
       React.createElement('div',{className:'box'},
         React.createElement('div',{className:'nm'}, pl(p.idx)),
         React.createElement('div',{className:'ch'}, `${p.chips} ${t('pts')}`),
         p.idx===dealerIdx && React.createElement('div',{className:'dealer-tag'}, t('dealer')),
         label && React.createElement('div',{className:'lbl'}, label),
-        p.resultText && React.createElement('div',{className:'res '+(p.result||'')}, p.resultText)
+        showResult && p.resultText && p.idx!==dealerIdx && React.createElement('div',{className:'res '+(p.result||'')}, p.resultText)
       ),
       showCards && cards.length>0 && React.createElement('div',{className:'cards'},
-        cards.map((c,ci)=>React.createElement(CardView,{key:ci,card:c}))
+        cards.map((c,ci)=>React.createElement(CardView,{key:ci,card:c,back:backPhase}))
       )
     );
   }
@@ -632,7 +649,7 @@ function Game(){
           ? React.createElement('div',{className:'bet-display'}, lang==='zh'?'你是庄家，无需下注':'You are dealer')
           : React.createElement('div',{className:'bet-display'}, t('betCurrent')+bet),
         !youDealer && React.createElement('div',{className:'chip-row'},
-          [100,200,500,1000].map(v=>React.createElement('button',{key:v,className:'chip',onClick:()=>addBet(v)}, v))),
+          [1,5,10,50,100,500,1000].map(v=>React.createElement('button',{key:v,className:'chip',onClick:()=>addBet(v)}, v))),
         React.createElement('div',{className:'btn-row'},
           !youDealer && React.createElement('button',{className:'btn btn-dim',onClick:clearBet}, t('clear')),
           React.createElement('button',{className:'btn btn-gold',onClick:isBet1?confirmBet1:confirmBet2}, t('confirm')))
@@ -642,7 +659,7 @@ function Game(){
       return React.createElement('div',{className:'btn-row'},
         React.createElement('button',{className:'btn btn-gold pulse',onClick:revealSG}, t('deal1')));
     }
-    if(phase==='sgDone'){
+    if(phase==='sgReveal'){
       return React.createElement('div',{className:'btn-row'},
         React.createElement('button',{className:'btn btn-gold pulse',onClick:toRound2}, t('round2')));
     }
@@ -650,9 +667,9 @@ function Game(){
       return React.createElement('div',{className:'btn-row'},
         React.createElement('button',{className:'btn btn-gold pulse',onClick:revealNiu}, t('deal2')));
     }
-    if(phase==='end'){
+    if(phase==='niuReveal'){
       return React.createElement('div',{className:'btn-row'},
-        React.createElement('button',{className:'btn btn-gold pulse',onClick:()=>startRound()}, t('next')));
+        React.createElement('button',{className:'btn btn-gold pulse',onClick:nextGo}, t('next')));
     }
     return null;
   }
@@ -706,23 +723,6 @@ function Game(){
     ),
     // ready 阶段：在场 AI 座位也可点击移除（叠加提示）
     React.createElement('div',{id:'control-zone'}, React.createElement(ControlZone)),
-
-    // 结算弹层
-    settle && React.createElement('div',{className:'overlay',onClick:afterSettle},
-      React.createElement('div',{className:'modal',onClick:e=>e.stopPropagation()},
-        React.createElement('h3',null, t('settleTitle')+'　'+(settle.stage==='sg'?t('sanGong'):t('niuniu'))),
-        React.createElement('div',{className:'settle-row'},
-          React.createElement('span',{className:'d'}, t('dealer')+'：'+pl(settle.dealerIdx)),
-          React.createElement('span',null, settle.dealerLabel)),
-        settle.rows.map(r=>React.createElement('div',{className:'settle-row',key:r.idx},
-          React.createElement('span',null, r.name+'　'+r.pLabel),
-          React.createElement('span',{className:r.delta>0?'pos':(r.delta<0?'neg':'')},
-            r.delta>0?`+${r.delta}`:(r.delta<0?`${r.delta}`:t('draw'))))),
-        React.createElement('div',{className:'btn-row',style:{marginTop:14}},
-          React.createElement('button',{className:'btn btn-gold',onClick:afterSettle},
-            settle.stage==='sg'?t('round2'):t('next')))
-      )
-    ),
 
     // 规则
     showRules && React.createElement('div',{className:'overlay',onClick:()=>setShowRules(false)},
