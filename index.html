@@ -442,7 +442,7 @@ function Game(){
   const [sfxVol,setSfxVol]=useState(50);
   const [volPanel,setVolPanel]=useState(null);
 
-  const pl=k=>I18N[lang].players[k]||('AI '+k);
+  const pl=k=>k===0?(lang==='zh'?'你':'You'):('AI '+k);
   const isActive=p=>p.active && (p.isHuman || p.chips>0);
 
   // 座位环形坐标（按"在场"玩家均匀分布，你固定在底部）
@@ -572,6 +572,13 @@ function Game(){
 
   // ── 重置/设置 ──
   function openSetup(){ setSetupChips(String(startChips)); setShowSetup(true); playSfx('tap'); }
+  // 真正重新开始：用当前积分与AI数重置，关掉所有弹窗
+  function restartGame(){
+    setPlayers(makePlayers(numAI,startChips));
+    setRound(1); setDealerIdx(0); setPhase('ready'); setBet(0); setLockedBet(0);
+    setSettle(null); setGameOver(null); setShowSetup(false); setShowRules(false);
+    playSfx('btn');
+  }
   function applySetup(){
     let c=parseInt(setupChips); if(isNaN(c)||c<100)c=10000;
     setStartChips(c);
@@ -737,7 +744,7 @@ function Game(){
     ),
 
     // 设置/重置弹层
-    showSetup && React.createElement('div',{className:'overlay',onClick:()=>setShowSetup(false)},
+    showSetup && !gameOver && React.createElement('div',{className:'overlay',onClick:()=>setShowSetup(false)},
       React.createElement('div',{className:'modal',onClick:e=>e.stopPropagation(),style:{textAlign:'center'}},
         React.createElement('h3',null, lang==='zh'?'⚙ 设置 / 重新开始':'⚙ Setup / Restart'),
         React.createElement('div',{className:'rules-p',style:{textAlign:'left'}},
@@ -757,7 +764,7 @@ function Game(){
       React.createElement('div',{className:'modal',style:{textAlign:'center'}},
         React.createElement('h3',null, gameOver==='win'?t('gameOverWin'):t('gameOverLose')),
         React.createElement('div',{className:'btn-row',style:{marginTop:14}},
-          React.createElement('button',{className:'btn btn-gold',onClick:openSetup}, t('restart'))))
+          React.createElement('button',{className:'btn btn-gold',onClick:restartGame}, t('restart'))))
     )
   );
 }
