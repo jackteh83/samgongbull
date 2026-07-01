@@ -428,6 +428,7 @@ function Game(){
   const [dealerIdx,setDealerIdx]=useState(0);
   const [phase,setPhase]=useState('ready'); // ready/bet1/dealt1/sgDone/bet2/dealt2/end
   const [bet,setBet]=useState(0);
+  const [lockedBet,setLockedBet]=useState(0); // 本局已确认的全场注额（用于中央显示）
   const [deck,setDeck]=useState([]);
   const [dealtSeq,setDealtSeq]=useState(0); // 已发出的牌数（全局发牌序号，从庄家起逐人逐张）
   const [settle,setSettle]=useState(null);
@@ -477,18 +478,18 @@ function Game(){
   }
 
   // ── 下注 ──
-  function addBet(v){ const human=players[0]; if(dealerIdx===0)return; setBet(b=>Math.min(b+v,human.chips)); playSfx('chip'); }
+  function addBet(v){ const human=players[0]; setBet(b=>Math.min(b+v,human.chips||v*100)); playSfx('chip'); }
   function clearBet(){ setBet(0); playSfx('tap'); }
   function aiBet(){ return Math.min(200, startChips); }
 
   // 确认第一轮下注 → 从庄家起逐人逐张发3张 → 停在 dealt1
   function confirmBet1(){
-    if(dealerIdx!==0 && bet<=0){ alert(t('alertBet')); return; }
+    if(bet<=0){ alert(t('alertBet')); return; }
     playSfx('btn');
     let d=[...deck];
     const ps=players.map(p=>({...p}));
     ps.forEach(p=>{ if(isActive(p)){ p.hand1=[d.pop(),d.pop(),d.pop()]; p.sg=calcSanGong(p.hand1);} });
-    const useBet=dealerIdx===0?aiBet():bet;
+    const useBet=bet; setLockedBet(bet);
     ps.forEach(p=>{ if(isActive(p)&&p.idx!==dealerIdx){ p.bet=useBet; } });
     const N=ps.filter(isActive).length;
     setDeck(d); setPlayers(ps); setDealtSeq(0); setPhase('dealing1');
@@ -510,12 +511,12 @@ function Game(){
   // 第二轮
   function toRound2(){ playSfx('btn'); setBet(0); setSettle(null); setPhase('bet2'); }
   function confirmBet2(){
-    if(dealerIdx!==0 && bet<=0){ alert(t('alertBet')); return; }
+    if(bet<=0){ alert(t('alertBet')); return; }
     playSfx('btn');
     let d=[...deck];
     const ps=players.map(p=>({...p}));
     ps.forEach(p=>{ if(isActive(p)){ p.hand2=[d.pop(),d.pop()]; p.niu=calcNiuNiu([...p.hand1,...p.hand2],lang);} });
-    const useBet=dealerIdx===0?aiBet():bet;
+    const useBet=bet; setLockedBet(bet);
     ps.forEach(p=>{ if(isActive(p)&&p.idx!==dealerIdx){ p.bet=useBet; } });
     const N=ps.filter(isActive).length;
     setDeck(d); setPlayers(ps); setDealtSeq(N*3); setPhase('dealing2');
@@ -644,14 +645,13 @@ function Game(){
     if(phase==='bet1'||phase==='bet2'){
       const isBet1=phase==='bet1'; const youDealer=dealerIdx===0;
       return React.createElement('div',null,
-        React.createElement('div',{className:'bet-title'}, isBet1?t('betTitle1'):t('betTitle2')),
-        youDealer
-          ? React.createElement('div',{className:'bet-display'}, lang==='zh'?'你是庄家，无需下注':'You are dealer')
-          : React.createElement('div',{className:'bet-display'}, t('betCurrent')+bet),
-        !youDealer && React.createElement('div',{className:'chip-row'},
+        React.createElement('div',{className:'bet-title'},
+          (isBet1?t('betTitle1'):t('betTitle2')) + (youDealer?(lang==='zh'?'（你是庄家，设定全场注额）':' (You are dealer, set table bet)'):'')),
+        React.createElement('div',{className:'bet-display'}, t('betCurrent')+bet),
+        React.createElement('div',{className:'chip-row'},
           [1,5,10,50,100,500,1000].map(v=>React.createElement('button',{key:v,className:'chip',onClick:()=>addBet(v)}, v))),
         React.createElement('div',{className:'btn-row'},
-          !youDealer && React.createElement('button',{className:'btn btn-dim',onClick:clearBet}, t('clear')),
+          React.createElement('button',{className:'btn btn-dim',onClick:clearBet}, t('clear')),
           React.createElement('button',{className:'btn btn-gold',onClick:isBet1?confirmBet1:confirmBet2}, t('confirm')))
       );
     }
@@ -715,8 +715,10 @@ function Game(){
         React.createElement('div',{id:'felt-center'},
           React.createElement('div',{className:'rd'}, `${t('roundLabel')} ${round} ${t('roundSuffix')}`),
           React.createElement('div',{className:'ph'}, phase==='ready'?t('waitStart'):phaseText),
-          (phase==='bet1'||phase==='bet2') && dealerIdx!==0 && bet>0 &&
-            React.createElement('div',{className:'betc'}, t('betCurrent')+bet)
+          (phase==='bet1'||phase==='bet2') && bet>0 &&
+            React.createElement('div',{className:'betc'}, t('betCurrent')+bet),
+          (phase==='dealing1'||phase==='dealt1'||phase==='sgReveal'||phase==='dealing2'||phase==='dealt2'||phase==='niuReveal') && lockedBet>0 &&
+            React.createElement('div',{className:'betc'}, (lang==='zh'?'本局注额：':'Table bet: ')+lockedBet)
         ),
         activePlayers.map((p,i)=>renderSeat(p,i,activePlayers.length))
       )
