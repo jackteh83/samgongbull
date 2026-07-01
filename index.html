@@ -351,10 +351,25 @@ const SFX={on:true,vol:0.5};
 function playSfx(type){
   if(!SFX.on)return; const ctx=actx(); if(!ctx)return;
   try{
-    const o=ctx.createOscillator(),g=ctx.createGain(),now=ctx.currentTime;
+    const now=ctx.currentTime;
+    if(type==='deal'){
+      // 响亮清脆的发牌"啪"声：高频短促 + 噪声打击感
+      const o=ctx.createOscillator(),g=ctx.createGain();
+      o.type='square'; o.frequency.setValueAtTime(1200,now); o.frequency.exponentialRampToValueAtTime(400,now+0.06);
+      g.gain.setValueAtTime(0.0001,now); g.gain.exponentialRampToValueAtTime(0.55*SFX.vol,now+0.005); g.gain.exponentialRampToValueAtTime(0.0001,now+0.11);
+      o.connect(g); g.connect(ctx.destination); o.start(now); o.stop(now+0.12);
+      // 叠加一层短噪声增加"拍"的质感
+      try{
+        const bl=ctx.createBufferSource(); const buf=ctx.createBuffer(1,ctx.sampleRate*0.05,ctx.sampleRate);
+        const dat=buf.getChannelData(0); for(let i=0;i<dat.length;i++)dat[i]=(Math.random()*2-1)*Math.pow(1-i/dat.length,3);
+        bl.buffer=buf; const ng=ctx.createGain(); ng.gain.value=0.35*SFX.vol; bl.connect(ng); ng.connect(ctx.destination); bl.start(now);
+      }catch(e){}
+      return;
+    }
+    const o=ctx.createOscillator(),g=ctx.createGain();
     const cfg={tap:[520,720,'sine'],btn:[660,880,'triangle'],flip:[300,500,'sine'],win:[600,1000,'triangle'],lose:[400,200,'sawtooth'],chip:[800,600,'square']}[type]||[520,720,'sine'];
     o.type=cfg[2]; o.frequency.setValueAtTime(cfg[0],now); o.frequency.exponentialRampToValueAtTime(cfg[1],now+0.08);
-    g.gain.setValueAtTime(0.0001,now); g.gain.exponentialRampToValueAtTime(0.28*SFX.vol,now+0.01); g.gain.exponentialRampToValueAtTime(0.0001,now+0.16);
+    g.gain.setValueAtTime(0.0001,now); g.gain.exponentialRampToValueAtTime(0.4*SFX.vol,now+0.01); g.gain.exponentialRampToValueAtTime(0.0001,now+0.16);
     o.connect(g); g.connect(ctx.destination); o.start(now); o.stop(now+0.17);
   }catch(e){}
 }
@@ -407,7 +422,7 @@ function Game(){
   const [phase,setPhase]=useState('ready'); // ready/bet1/dealt1/sgDone/bet2/dealt2/end
   const [bet,setBet]=useState(0);
   const [deck,setDeck]=useState([]);
-  const [dealtRound,setDealtRound]=useState(0); // 已发到第几轮（逐张发牌动画）
+  const [dealtSeq,setDealtSeq]=useState(0); // 已发出的牌数（全局发牌序号，从庄家起逐人逐张）
   const [settle,setSettle]=useState(null);
   const [showRules,setShowRules]=useState(false);
   const [showSetup,setShowSetup]=useState(false); // 重置/设置弹层
@@ -459,7 +474,7 @@ function Game(){
   function clearBet(){ setBet(0); playSfx('tap'); }
   function aiBet(){ return Math.min(200, startChips); }
 
-  // 确认第一轮下注 → 逐张发3张（动画）→ 停在 dealt1
+  // 确认第一轮下注 → 从庄家起逐人逐张发3张 → 停在 dealt1
   function confirmBet1(){
     if(dealerIdx!==0 && bet<=0){ alert(t('alertBet')); return; }
     playSfx('btn');
@@ -468,20 +483,21 @@ function Game(){
     ps.forEach(p=>{ if(isActive(p)){ p.hand1=[d.pop(),d.pop(),d.pop()]; p.sg=calcSanGong(p.hand1);} });
     const useBet=dealerIdx===0?aiBet():bet;
     ps.forEach(p=>{ if(isActive(p)&&p.idx!==dealerIdx){ p.bet=useBet; } });
-    setDeck(d); setPlayers(ps); setDealtRound(0); setPhase('dealing1');
-    dealAnim(3,'dealt1');
+    const N=ps.filter(isActive).length;
+    setDeck(d); setPlayers(ps); setDealtSeq(0); setPhase('dealing1');
+    dealSeqAnim(0, N*3, 'dealt1');
   }
-  // 逐轮发牌动画：每轮给每人发一张，配音效；发完 totalRounds 轮进入 nextPhase
-  function dealAnim(totalRounds,nextPhase){
-    let r=0;
+  // 逐张发牌动画：从 fromSeq 发到 toSeq，每张一个响亮音效，快速顺序
+  function dealSeqAnim(fromSeq,toSeq,nextPhase){
+    let s=fromSeq;
     const step=()=>{
-      r++; setDealtRound(r); playSfx('flip');
-      if(r<totalRounds){ setTimeout(step,420); }
-      else { setTimeout(()=>setPhase(nextPhase),350); }
+      s++; setDealtSeq(s); playSfx('deal');
+      if(s<toSeq){ setTimeout(step,110); }        // 快速顺序发
+      else { setTimeout(()=>setPhase(nextPhase),300); }
     };
-    setTimeout(step,250);
+    setTimeout(step,200);
   }
-  // 翻牌 → 三公结算
+  // 翻牌 → 三公结算（全部发完后才开牌）
   function revealSG(){ playSfx('flip'); resolveStage(players,'sg'); }
 
   // 第二轮
@@ -494,18 +510,9 @@ function Game(){
     ps.forEach(p=>{ if(isActive(p)){ p.hand2=[d.pop(),d.pop()]; p.niu=calcNiuNiu([...p.hand1,...p.hand2],lang);} });
     const useBet=dealerIdx===0?aiBet():bet;
     ps.forEach(p=>{ if(isActive(p)&&p.idx!==dealerIdx){ p.bet=useBet; } });
-    setDeck(d); setPlayers(ps); setDealtRound(3); setPhase('dealing2');
-    dealAnim2();
-  }
-  // 牛牛阶段：在已有3张基础上，逐张发第4、5张
-  function dealAnim2(){
-    let r=3;
-    const step=()=>{
-      r++; setDealtRound(r); playSfx('flip');
-      if(r<5){ setTimeout(step,420); }
-      else { setTimeout(()=>setPhase('dealt2'),350); }
-    };
-    setTimeout(step,250);
+    const N=ps.filter(isActive).length;
+    setDeck(d); setPlayers(ps); setDealtSeq(N*3); setPhase('dealing2');
+    dealSeqAnim(N*3, N*5, 'dealt2');
   }
   function revealNiu(){ playSfx('flip'); resolveStage(players,'niu'); }
 
@@ -567,6 +574,15 @@ function Game(){
 
   // ── 渲染座位 ──
   const activePlayers=players.filter(isActive);
+  // 从庄家起的活跃玩家顺序 → 每个 idx 的发牌位置 pos（庄家=0）
+  const dealPosMap={};
+  (function(){
+    const N=activePlayers.length; let pos=0;
+    for(let s=0;s<players.length && pos<N;s++){
+      const i=(dealerIdx+s)%players.length;
+      if(isActive(players[i])){ dealPosMap[i]=pos; pos++; }
+    }
+  })();
   function renderSeat(p,orderIdx,total){
     const pos=seatPos(orderIdx,total);
     const cls=['seat']; if(p.idx===dealerIdx)cls.push('dealer'); if(p.isHuman)cls.push('you');
@@ -574,8 +590,13 @@ function Game(){
     const showCards=(dealing||phase==='dealt1'||phase==='sgDone'||phase==='bet2'||phase==='dealt2'||phase==='end');
     const showFive=(phase==='dealing2'||phase==='dealt2'||phase==='end');
     let cards = showFive?[...(p.hand1||[]),...(p.hand2||[])]:(p.hand1||[]);
-    // 发牌动画：只显示已发出的张数
-    if(dealing) cards=cards.slice(0,dealtRound);
+    // 发牌动画：按"从庄家起逐人逐张"的全局序号决定每张是否已发出
+    if(dealing){
+      const N=activePlayers.length; const pos=dealPosMap[p.idx]||0;
+      const visible=[];
+      cards.forEach((c,r)=>{ const seq=r*N+pos+1; if(seq<=dealtSeq) visible.push(c); });
+      cards=visible;
+    }
     let label='';
     if((phase==='dealt1'||phase==='sgDone')&&p.sg) label=sanGongLabel(p.sg,lang);
     if((phase==='dealt2'||phase==='end')&&p.niu) label=p.niu.label;
