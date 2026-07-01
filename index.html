@@ -644,7 +644,7 @@ function Game(){
     if(phase==='ready'){
       return React.createElement('div',null,
         React.createElement('div',{className:'btn-row'},
-          React.createElement('button',{className:'btn btn-gold pulse',onClick:mainStart}, '🀄 '+t('start')),
+          React.createElement('button',{className:'btn btn-gold pulse',onClick:mainStart}, t('start')),
           React.createElement('button',{className:'btn btn-ghost',onClick:openSetup}, '⚙ '+(lang==='zh'?'设置积分':'Set Chips'))
         )
       );
