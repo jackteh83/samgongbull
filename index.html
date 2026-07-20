@@ -132,6 +132,21 @@
   .card.combo{outline:2px solid var(--gold);}
   .card.lg{width:40px;height:56px;} .card.lg .r{font-size:18px;} .card.lg .s{font-size:14px;}
 
+  /* 摆牌区（真人玩家自己摆牌） */
+  .arr-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+  .arr-title{color:var(--gold);font-size:14px;}
+  .arr-timer{
+    font-family:'Share Tech Mono',monospace;font-size:20px;font-weight:700;color:var(--gold-lt);
+    border:1.5px solid var(--gold);border-radius:8px;padding:2px 10px;min-width:52px;text-align:center;
+  }
+  .arr-timer.urgent{color:#e74c3c;border-color:#e74c3c;animation:blink .5s infinite;}
+  @keyframes blink{50%{opacity:.35;}}
+  .arr-label{text-align:center;color:var(--dim);font-size:12px;margin:6px 0 4px;}
+  .arr-row{display:flex;gap:10px;justify-content:center;}
+  .arr-card{border-radius:8px;padding:3px;transition:.12s;cursor:pointer;}
+  .arr-card.sel{outline:2.5px solid var(--gold-lt);box-shadow:0 0 14px rgba(240,201,107,0.7);transform:translateY(-6px);}
+  .arr-card:active{transform:scale(0.95);}
+
   /* 下注区 / 动作区 */
   #control-zone{max-width:520px;margin:14px auto 30px;padding:0 14px;}
   .bet-title{text-align:center;color:var(--gold);font-size:14px;margin-bottom:8px;}
@@ -276,6 +291,50 @@ function calcNiuNiu(hand5,lang){
   }
   return {niuLevel:best.level,cv:best.cv,comboIdx:best.combo,remainIdx:best.remain,label:best.label,multiplier:best.multiplier,specialType:best.specialType};
 }
+// 真人玩家自己摆牌后的判定：桌面3张（table3）先看是否凑10的倍数，
+// 有才算牛；手上2张（hand2）决定牛几 / 牛宝宝 / 牛冬菇。3和6可互换（同原规则）。
+function calcNiuArranged(table3,hand2,lang){
+  const t=k=>I18N[lang][k];
+  const hand5=[...table3,...hand2];
+  const isFace=c=>['J','Q','K'].includes(c.rank);
+  const rankOrder=r=>({'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':11,'Q':12,'K':13,'A':14})[r];
+  if(hand5.every(isFace)){
+    return {niuLevel:13,cv:10000,comboIdx:[0,1,2],remainIdx:[3,4],label:t('niuWang'),multiplier:5,specialType:'NiuWang'};
+  }
+  const baseVal=c=>{ if(['J','Q','K'].includes(c.rank))return 10; if(c.rank==='A')return 1; return parseInt(c.rank);};
+  const variants=hand5.map(c=>{ const v=baseVal(c); if(c.rank==='3')return[3,6]; if(c.rank==='6')return[6,3]; return[v];});
+  let valueSets=[[]];
+  for(const opts of variants){ const next=[]; for(const partial of valueSets) for(const v of opts) next.push([...partial,v]); valueSets=next;}
+  let best=null;
+  for(const vals of valueSets){
+    if((vals[0]+vals[1]+vals[2])%10!==0) continue; // 桌面三张必须凑成10的倍数
+    const c1=hand5[3],c2=hand5[4];
+    const sameRank=c1.rank===c2.rank;
+    const spA=[c1,c2].some(c=>c.rank==='A'&&c.suit==='♠');
+    const hasFace=[c1,c2].some(c=>isFace(c));
+    let ev;
+    if(spA&&hasFace&&!sameRank){
+      ev={level:12,cv:5000,label:t('niuDonggu'),multiplier:4,specialType:'NiuDonggu'};
+    }else if(sameRank){
+      const zh=lang!=='en';
+      if(c1.rank==='A'){
+        ev=spA?{level:11,cv:3014,label:zh?'牛宝宝A':'Twin Aces (Max)',multiplier:3,specialType:'NiuBaobao'}
+              :{level:11,cv:3001,label:zh?'牛宝宝1':'Twin Aces (Min)',multiplier:3,specialType:'NiuBaobao'};
+      }else{
+        ev={level:11,cv:3000+rankOrder(c1.rank),label:zh?`牛宝宝${c1.rank}`:`Twin ${c1.rank}`,multiplier:3,specialType:'NiuBaobao'};
+      }
+    }else{
+      const pt=(vals[3]+vals[4])%10;
+      if(pt===0){ ev={level:10,cv:2010,label:t('niuNiu'),multiplier:2,specialType:'NiuNiu'};}
+      else{ const nlabel=lang==='en'?`${t('niuN')} ${pt}`:`${t('niuN')}${pt}`; ev={level:pt,cv:1000+pt,label:nlabel,multiplier:1,specialType:null};}
+    }
+    if(!best||ev.cv>best.cv){ best=ev; }
+  }
+  if(best===null){
+    return {niuLevel:0,cv:-1,comboIdx:[],remainIdx:[0,1,2,3,4],label:t('noNiu'),multiplier:0,specialType:null};
+  }
+  return {niuLevel:best.level,cv:best.cv,comboIdx:[0,1,2],remainIdx:[3,4],label:best.label,multiplier:best.multiplier,specialType:best.specialType};
+}
 function compareNiuNiu(a,b){
   if(!a&&!b)return 0; if(!a)return -1; if(!b)return 1;
   const av=a.cv!==undefined?a.cv:a.niuLevel, bv=b.cv!==undefined?b.cv:b.niuLevel;
@@ -301,6 +360,8 @@ const I18N = {
     betCurrent:'下注：', clear:'清除', confirm:'确认下注',
     start:'开始游戏', deal1:'翻牌 · 三公结算', round2:'进入牛牛 · 下注', deal2:'翻牌 · 牛牛结算', next:'下一局 ▶', restart:'重新开始',
     phaseReady:'等待开始', phaseBet1:'第一轮下注', phaseSG:'三公结算', phaseBet2:'第二轮下注', phaseNiu:'牛牛结算', phaseEnd:'本局结束',
+    phaseArrange:'玩家摆牌',
+    arrTitle:'自己摆牌：点两张牌互换', arrTableLbl:'桌面三张（凑10的倍数才有牛）', arrHandLbl:'手上两张（决定牛几）', arrConfirm:'确认摆牌',
     waitStart:'等待开始',
     settleTitle:'📋 本局结算', sanGong:'三公', niuniu:'牛牛', curChips:'积分', resultCol:'本局',
     draw:'和局', win:'赢', lose:'输',
@@ -316,6 +377,7 @@ const I18N = {
       ['流程','每局两阶段：先发3张比【三公】，再发2张（共5张）比【牛牛】，各自下注、各自结算。庄家轮流坐。'],
       ['三公','三张全J/Q/K=三公(×3)最大；三张和个位为0=10点(×2)；否则按点数(1~9，×1)。'],
       ['牛牛','5张中3张凑10的倍数，剩两张定牛型。牛魔王(全JQK)×5＞牛冬菇(♠A+JQK)×4＞牛宝宝(对子)×3＞牛10×2＞牛9~1×1＞没牛。3和6可互换。'],
+      ['摆牌','第二轮发完5张后，你有10秒自己摆牌：点手上和桌面的牌互换。时间到或确认后，先看桌面3张是否凑10的倍数（没凑到=没牛），再由手上2张判定牛几。AI 自动摆牌。'],
       ['结算','赢家按自己牌型倍率从庄家收分，输家按庄家倍率赔给庄家；积分不会变负。']
     ]
   },
@@ -327,6 +389,8 @@ const I18N = {
     betCurrent:'Bet: ', clear:'Clear', confirm:'Confirm Bet',
     start:'Start Game', deal1:'Reveal · San Gong', round2:'To Niu Niu · Bet', deal2:'Reveal · Niu Niu', next:'Next Round ▶', restart:'Restart',
     phaseReady:'Ready', phaseBet1:'Round 1 Bet', phaseSG:'San Gong', phaseBet2:'Round 2 Bet', phaseNiu:'Niu Niu', phaseEnd:'Round End',
+    phaseArrange:'Arrange Cards',
+    arrTitle:'Arrange: tap two cards to swap', arrTableLbl:'Table 3 (must sum to a ×10 for a bull)', arrHandLbl:'Hand 2 (sets the bull number)', arrConfirm:'Confirm',
     waitStart:'Waiting',
     settleTitle:'📋 Settlement', sanGong:'San Gong', niuniu:'Niu Niu', curChips:'Pts', resultCol:'Round',
     draw:'Draw', win:'Win', lose:'Lose',
@@ -342,6 +406,7 @@ const I18N = {
       ['Flow','Two stages: deal 3 for [San Gong], then 2 more (5 total) for [Niu Niu]. Bet & settle each. Dealer rotates.'],
       ['San Gong','All J/Q/K = Sam Kong (×3, highest); sum mod 10 = 0 → 10pts (×2); else points 1-9 (×1).'],
       ['Niu Niu','3 of 5 sum to multiple of 10, other 2 set the bull. Bull King(all JQK)×5 > Wild Bull(♠A+JQK)×4 > Twin(pair)×3 > Bull Ten×2 > Bull9-1×1 > No Bull. 3 and 6 interchangeable.'],
+      ['Arrange','After the 2nd deal you get 10s to arrange your own cards: tap a hand card and a table card to swap. On timeout/confirm, the table 3 are checked first (no ×10 sum = No Bull), then your hand 2 set the bull. AI arranges automatically.'],
       ['Settle','Winner takes from dealer by own multiplier; loser pays dealer by dealer multiplier. Points never go negative.']
     ]
   }
@@ -441,6 +506,11 @@ function Game(){
   const [musicVol,setMusicVol]=useState(50);
   const [sfxVol,setSfxVol]=useState(50);
   const [volPanel,setVolPanel]=useState(null);
+  // ── 真人摆牌状态 ──
+  const [arrTable,setArrTable]=useState([]); // 桌面3张
+  const [arrHand,setArrHand]=useState([]);   // 手上2张
+  const [arrSel,setArrSel]=useState(null);   // 选中：{zone:'t'|'h', idx}
+  const [arrTime,setArrTime]=useState(10);   // 10秒倒计时
 
   const pl=k=>k===0?(lang==='zh'?'你':'You'):('AI '+k);
   const isActive=p=>p.active && (p.isHuman || p.chips>0);
@@ -515,12 +585,54 @@ function Game(){
     playSfx('btn');
     let d=[...deck];
     const ps=players.map(p=>({...p}));
-    ps.forEach(p=>{ if(isActive(p)){ p.hand2=[d.pop(),d.pop()]; p.niu=calcNiuNiu([...p.hand1,...p.hand2],lang);} });
+    ps.forEach(p=>{ if(isActive(p)){
+      p.hand2=[d.pop(),d.pop()];
+      // AI 保持原样：自动找最佳摆法；真人玩家等待自己摆牌
+      if(!p.isHuman){ p.niu=calcNiuNiu([...p.hand1,...p.hand2],lang); }
+      else { p.niu=null; }
+    }});
     const useBet=bet; setLockedBet(bet);
     ps.forEach(p=>{ if(isActive(p)&&p.idx!==dealerIdx){ p.bet=useBet; } });
     const N=ps.filter(isActive).length;
     setDeck(d); setPlayers(ps); setDealtSeq(N*3); setPhase('dealing2');
-    dealSeqAnim(N*3, N*5, 'dealt2');
+    dealSeqAnim(N*3, N*5, 'arrange'); // 发完5张 → 进入真人摆牌
+  }
+  // ── 真人摆牌 ──
+  // 进入摆牌阶段：初始化 桌面=前3张、手上=后2张，倒计时10秒
+  useEffect(()=>{
+    if(phase!=='arrange')return;
+    const h=players[0];
+    setArrTable([...(h.hand1||[])]); setArrHand([...(h.hand2||[])]);
+    setArrSel(null); setArrTime(10);
+  },[phase]);
+  // 倒计时：到 0 自动按当前摆法确认
+  useEffect(()=>{
+    if(phase!=='arrange')return;
+    if(arrTime<=0){ confirmArrange(); return; }
+    const id=setTimeout(()=>setArrTime(x=>x-1),1000);
+    return ()=>clearTimeout(id);
+  },[phase,arrTime]);
+  // 点牌互换：先点一张选中，再点另一区的牌与之互换（同区点击=改选）
+  function tapArr(zone,idx){
+    if(phase!=='arrange')return;
+    if(!arrSel){ setArrSel({zone,idx}); playSfx('tap'); return; }
+    if(arrSel.zone===zone){
+      setArrSel(arrSel.idx===idx?null:{zone,idx}); playSfx('tap'); return;
+    }
+    const tt=[...arrTable], hh=[...arrHand];
+    if(zone==='t'){ const tmp=tt[idx]; tt[idx]=hh[arrSel.idx]; hh[arrSel.idx]=tmp; }
+    else{ const tmp=hh[idx]; hh[idx]=tt[arrSel.idx]; tt[arrSel.idx]=tmp; }
+    setArrTable(tt); setArrHand(hh); setArrSel(null); playSfx('flip');
+  }
+  // 确认摆牌（点按钮或倒计时结束）：锁定摆法 → 判定 → 等待翻牌
+  function confirmArrange(){
+    if(phase!=='arrange')return;
+    playSfx('btn');
+    const ps=players.map(p=>({...p}));
+    const h=ps[0];
+    h.hand1=[...arrTable]; h.hand2=[...arrHand];
+    h.niu=calcNiuArranged(arrTable,arrHand,lang);
+    setPlayers(ps); setArrSel(null); setPhase('dealt2');
   }
   function revealNiu(){ playSfx('flip'); resolveStage(players,'niu'); }
 
@@ -607,13 +719,13 @@ function Game(){
     const cls=['seat']; if(p.idx===dealerIdx)cls.push('dealer'); if(p.isHuman)cls.push('you');
     const dealing=(phase==='dealing1'||phase==='dealing2');
     // 牌背阶段：发牌中 + 发完未翻（dealt1/bet2/dealt2）都显示牌背
-    const backPhase=(dealing||phase==='dealt1'||phase==='bet2'||phase==='dealt2');
+    const backPhase=(dealing||phase==='dealt1'||phase==='bet2'||phase==='arrange'||phase==='dealt2');
     // 正面阶段：翻牌后（sgReveal 显示3张；niuReveal/end 显示5张）
     const faceSG=(phase==='sgReveal');
     const faceNiu=(phase==='niuReveal'||phase==='end');
     const showCards=(backPhase||faceSG||faceNiu);
     // 该显示几张牌
-    const showFiveCount=(phase==='dealing2'||phase==='dealt2'||faceNiu);
+    const showFiveCount=(phase==='dealing2'||phase==='arrange'||phase==='dealt2'||faceNiu);
     let cards = showFiveCount?[...(p.hand1||[]),...(p.hand2||[])]:(p.hand1||[]);
     if(dealing){
       const N=activePlayers.length; const pp=dealPosMap[p.idx]||0;
@@ -670,6 +782,29 @@ function Game(){
       return React.createElement('div',{className:'btn-row'},
         React.createElement('button',{className:'btn btn-gold pulse',onClick:toRound2}, t('round2')));
     }
+    if(phase==='arrange'){
+      return React.createElement('div',null,
+        React.createElement('div',{className:'arr-head'},
+          React.createElement('span',{className:'arr-title'}, t('arrTitle')),
+          React.createElement('span',{className:'arr-timer'+(arrTime<=3?' urgent':'')}, arrTime+'s')),
+        React.createElement('div',{className:'arr-label'}, t('arrTableLbl')),
+        React.createElement('div',{className:'arr-row'},
+          arrTable.map((c,i)=>React.createElement('div',{
+            key:'t'+i,
+            className:'arr-card'+(arrSel&&arrSel.zone==='t'&&arrSel.idx===i?' sel':''),
+            onClick:()=>tapArr('t',i)
+          }, React.createElement(CardView,{card:c,big:true})))),
+        React.createElement('div',{className:'arr-label'}, t('arrHandLbl')),
+        React.createElement('div',{className:'arr-row'},
+          arrHand.map((c,i)=>React.createElement('div',{
+            key:'h'+i,
+            className:'arr-card'+(arrSel&&arrSel.zone==='h'&&arrSel.idx===i?' sel':''),
+            onClick:()=>tapArr('h',i)
+          }, React.createElement(CardView,{card:c,big:true})))),
+        React.createElement('div',{className:'btn-row',style:{marginTop:12}},
+          React.createElement('button',{className:'btn btn-gold pulse',onClick:confirmArrange}, t('arrConfirm')))
+      );
+    }
     if(phase==='dealt2'){
       return React.createElement('div',{className:'btn-row'},
         React.createElement('button',{className:'btn btn-gold pulse',onClick:revealNiu}, t('deal2')));
@@ -682,7 +817,7 @@ function Game(){
   }
 
   const dealingText=lang==='zh'?'发牌中…':'Dealing…';
-  const phaseText={ready:t('phaseReady'),bet1:t('phaseBet1'),dealing1:dealingText,dealt1:t('phaseSG'),sgDone:t('phaseSG'),bet2:t('phaseBet2'),dealing2:dealingText,dealt2:t('phaseNiu'),end:t('phaseEnd')}[phase]||'';
+  const phaseText={ready:t('phaseReady'),bet1:t('phaseBet1'),dealing1:dealingText,dealt1:t('phaseSG'),sgDone:t('phaseSG'),bet2:t('phaseBet2'),dealing2:dealingText,arrange:t('phaseArrange'),dealt2:t('phaseNiu'),end:t('phaseEnd')}[phase]||'';
 
   return React.createElement(LangCtx.Provider,{value:lang},
     React.createElement('div',{id:'topbar'},
@@ -724,7 +859,7 @@ function Game(){
           React.createElement('div',{className:'ph'}, phase==='ready'?t('waitStart'):phaseText),
           (phase==='bet1'||phase==='bet2') && bet>0 &&
             React.createElement('div',{className:'betc'}, t('betCurrent')+bet),
-          (phase==='dealing1'||phase==='dealt1'||phase==='sgReveal'||phase==='dealing2'||phase==='dealt2'||phase==='niuReveal') && lockedBet>0 &&
+          (phase==='dealing1'||phase==='dealt1'||phase==='sgReveal'||phase==='dealing2'||phase==='arrange'||phase==='dealt2'||phase==='niuReveal') && lockedBet>0 &&
             React.createElement('div',{className:'betc'}, (lang==='zh'?'本局注额：':'Table bet: ')+lockedBet)
         ),
         activePlayers.map((p,i)=>renderSeat(p,i,activePlayers.length))
